@@ -32,7 +32,7 @@ def replace_once(value: str, old: str, new: str, label: str) -> str:
 
 def replace_function(source: str, signature: str, replacement: str, label: str) -> str:
     lines = source.splitlines(keepends=True)
-    indexes = [i for i, line in enumerate(lines) if line.lstrip().startswith(signature)]
+    indexes = [i for i, line in enumerate(lines) if signature in line and not line.lstrip().startswith("#")]
     if not indexes:
         if replacement.strip() in source:
             return source
