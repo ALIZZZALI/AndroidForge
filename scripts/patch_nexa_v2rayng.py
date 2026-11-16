@@ -495,7 +495,7 @@ object RewardedAdManager {
             Tapsell.requestRewardedAd(zoneId, object : RequestResultListener {
                 override fun onSuccess(adId: String) {
                     if (!requestResolved.compareAndSet(false, true)) return
-                    mainHandler.removeCallbacks(requestTimeout)
+                    requestTimeout?.let(mainHandler::removeCallbacks)
 
                     if (internetLost.get() || !hasValidatedInternet(activity)) {
                         stopWatching()
@@ -849,7 +849,7 @@ def patch_launcher(root: Path) -> None:
             context.toast(R.string.app_tile_first_use)
             return false
         }
-        val sessionId = ConnectionCreditStore.reserveConnection(context)
+        val sessionId = ConnectionCreditStore.currentActiveSessionId(context) ?: ConnectionCreditStore.reserveConnection(context)
         if (sessionId.isNullOrBlank()) {
             context.toast(R.string.reward_ad_required)
             return false
@@ -958,7 +958,7 @@ def patch_main_activity(root: Path) -> None:
         }
 
         connectionRequestInProgress = true
-        if (ConnectionCreditStore.balance(this) > 0) {
+        if (ConnectionCreditStore.currentActiveSessionId(this) != null || ConnectionCreditStore.balance(this) > 0) {
             continueConnectionAfterReward()
             return
         }
@@ -1000,7 +1000,7 @@ def patch_main_activity(root: Path) -> None:
             return
         }
 
-        val sessionId = ConnectionCreditStore.reserveConnection(this)
+        val sessionId = ConnectionCreditStore.currentActiveSessionId(this) ?: ConnectionCreditStore.reserveConnection(this)
         if (sessionId.isNullOrBlank()) {
             connectionRequestInProgress = false
             toast(R.string.reward_ad_required)
