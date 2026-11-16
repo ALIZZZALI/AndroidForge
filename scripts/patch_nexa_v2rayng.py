@@ -1079,18 +1079,19 @@ def patch_core_vpn(root: Path) -> None:
             stopSelf(startId)
             return START_NOT_STICKY
         }
-        currentSessionId = sessionId
-
-        // Ignore duplicate commands for the same logical session. Re-establishing
-        // a TUN descriptor while the core is already running can tear down the
-        // active tunnel and incorrectly settle the same credit twice.
+        // Do not tear down an already-running tunnel for a duplicate or conflicting
+        // start command. The prior session ID is checked before it is overwritten.
         if (CoreServiceManager.isRunning()) {
-            if (currentSessionId == sessionId) return START_STICKY
+            val runningSessionId = currentSessionId ?: ConnectionCreditStore.currentActiveSessionId(this)
+            if (runningSessionId == sessionId) {
+                currentSessionId = sessionId
+                return START_STICKY
+            }
             ConnectionCreditStore.finishSession(this, sessionId)
-            currentSessionId = null
-            stopSelf(startId)
+            LogUtil.w(AppConfig.TAG, "StartCore-VPN: rejected a second session while core is running")
             return START_NOT_STICKY
         }
+        currentSessionId = sessionId
 
         val isSystemVpnStart = intent == null || intent.action == SERVICE_INTERFACE
         if (isSystemVpnStart) unlockStart()
@@ -1248,15 +1249,17 @@ def patch_proxy_service(root: Path) -> None:
             stopSelf(startId)
             return START_NOT_STICKY
         }
-        currentSessionId = sessionId
-
         if (CoreServiceManager.isRunning()) {
-            if (currentSessionId == sessionId) return START_STICKY
+            val runningSessionId = currentSessionId ?: ConnectionCreditStore.currentActiveSessionId(this)
+            if (runningSessionId == sessionId) {
+                currentSessionId = sessionId
+                return START_STICKY
+            }
             ConnectionCreditStore.finishSession(this, sessionId)
-            currentSessionId = null
-            stopSelf(startId)
+            LogUtil.w(AppConfig.TAG, "Rejected a second session while core is running")
             return START_NOT_STICKY
         }
+        currentSessionId = sessionId
 
         if (!CoreServiceManager.startCoreLoop(null, sessionId)) {
             ConnectionCreditStore.finishSession(this, sessionId)
