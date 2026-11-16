@@ -798,6 +798,16 @@ def patch_gradle(root: Path) -> None:
             '    implementation("com.google.guava:guava:31.1-android")\n',
             "Tapsell Mediation dependencies",
         )
+    if 'exclude(group = "com.google.guava", module = "listenablefuture")' not in value:
+        value = replace_once(
+            value,
+            "android {\\n",
+            'configurations.configureEach {\\n'
+            '    exclude(group = "com.google.guava", module = "listenablefuture")\\n'
+            '}\\n\\n'
+            'android {\\n',
+            "Exclude duplicate ListenableFuture stub in favor of Guava",
+        )
     if 'androidTestImplementation("androidx.test:core:' not in value:
         value = replace_once(
             value,
