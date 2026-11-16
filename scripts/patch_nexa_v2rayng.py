@@ -871,6 +871,17 @@ def patch_launcher(root: Path) -> None:
         startAuthorizedService(context, sessionId, guid)
     }
 
+    fun startServiceOrResumeActive(context: Context, guid: String? = null) {
+        if (!guid.isNullOrBlank()) MmkvManager.setSelectServer(guid)
+        val sessionId = ConnectionCreditStore.currentActiveSessionId(context)
+            ?: ConnectionCreditStore.reserveConnection(context)
+        if (sessionId.isNullOrBlank()) {
+            context.toast(R.string.reward_ad_required)
+            return
+        }
+        startAuthorizedService(context, sessionId, guid)
+    }
+
     fun startAuthorizedService(
         context: Context,
         sessionId: String,
@@ -1346,6 +1357,18 @@ def patch_root_service(root: Path) -> None:
     write(root, rel, value)
 
 
+def patch_boot_receiver(root: Path) -> None:
+    rel = "V2rayNG/app/src/main/java/com/v2ray/ang/receiver/BootReceiver.kt"
+    value = read(root, rel)
+    value = replace_once(
+        value,
+        "        LauncherManager.startService(context)\n",
+        "        LauncherManager.startServiceOrResumeActive(context)\n",
+        "BootReceiver session resume",
+    )
+    write(root, rel, value)
+
+
 def patch_core_manager(root: Path) -> None:
     rel = "V2rayNG/app/src/main/java/com/v2ray/ang/core/CoreServiceManager.kt"
     value = read(root, rel)
@@ -1418,6 +1441,7 @@ def patch_all(root: Path) -> None:
     patch_proxy_service(root)
     patch_root_service(root)
     patch_core_manager(root)
+    patch_boot_receiver(root)
 
 
 def main() -> int:
