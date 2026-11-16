@@ -1,0 +1,109 @@
+name: Build Nexa v2rayNG
+
+on:
+  push:
+    branches:
+      - nexa-v2rayng-rewarded
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    env:
+      NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/30.0.16248370
+      TAPSELL_APP_ID: ${{ secrets.TAPSELL_APP_ID }}
+      TAPSELL_REWARDED_ZONE_ID: ${{ secrets.TAPSELL_REWARDED_ZONE_ID }}
+    steps:
+      - name: Checkout Nexa build tooling
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Android SDK 37
+        uses: android-actions/setup-android@v4
+        with:
+          packages: 'platforms;android-37 build-tools;37.0.0 platform-tools'
+
+      - name: Install Android NDK
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager --install 'ndk;30.0.16248370'
+          echo "NDK_HOME=$ANDROID_HOME/ndk/30.0.16248370" >> "$GITHUB_ENV"
+          echo "$ANDROID_HOME/ndk/30.0.16248370" >> "$GITHUB_PATH"
+
+      - name: Fetch pinned official v2rayNG source and submodules
+        shell: bash
+        run: |
+          git clone https://github.com/2dust/v2rayNG.git upstream
+          git -C upstream checkout ef06bac9942a8550217ebe057daefd28964d436d
+          git -C upstream submodule update --init --recursive
+
+      - name: Apply Nexa changes
+        run: python3 scripts/patch_nexa_v2rayng.py --root upstream
+
+      - name: Build native hev tun libraries
+        shell: bash
+        run: |
+          cd upstream
+          bash compile-hevtun.sh
+          mkdir -p V2rayNG/app/libs
+          cp -R libs V2rayNG/app/
+
+      - name: Download matching Xray AAR
+        shell: bash
+        run: |
+          CURRENT_TAG=$(git -C upstream/AndroidLibXrayLite describe --tags --abbrev=0)
+          mkdir -p upstream/V2rayNG/app/libs
+          curl --fail --location --retry 3 \
+            "https://github.com/2dust/AndroidLibXrayLite/releases/download/${CURRENT_TAG}/libv2ray.aar" \
+            --output upstream/V2rayNG/app/libs/libv2ray.aar
+
+      - name: Configure Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build Nexa debug APK
+        shell: bash
+        run: |
+          cd upstream/V2rayNG
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          chmod +x gradlew
+          ./gradlew --no-daemon :app:assemblePlaystoreDebug
+
+      - name: Run credit-ledger instrumentation tests
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          script: cd upstream/V2rayNG && ./gradlew --no-daemon :app:connectedPlaystoreDebugAndroidTest
+
+      - name: Upload Nexa APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nexa-v2rayNG-debug
+          path: upstream/V2rayNG/app/build/outputs/apk/playstore/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nexa-build-diagnostics
+          path: |
+            upstream/V2rayNG/app/build/reports/
+            upstream/V2rayNG/app/build/outputs/logs/
+          if-no-files-found: ignore
+          retention-days: 7
