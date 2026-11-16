@@ -1327,15 +1327,17 @@ def patch_root_service(root: Path) -> None:
             stopSelf(startId)
             return START_NOT_STICKY
         }
-        currentSessionId = sessionId
-
         if (CoreServiceManager.isRunning()) {
-            if (currentSessionId == sessionId) return START_STICKY
+            val runningSessionId = currentSessionId ?: ConnectionCreditStore.currentActiveSessionId(this)
+            if (runningSessionId == sessionId) {
+                currentSessionId = sessionId
+                return START_STICKY
+            }
             ConnectionCreditStore.finishSession(this, sessionId)
-            currentSessionId = null
-            stopSelf(startId)
+            LogUtil.w(AppConfig.TAG, "Rejected a second session while core is running")
             return START_NOT_STICKY
         }
+        currentSessionId = sessionId
 
         if (!CoreServiceManager.startCoreLoop(null, sessionId)) {
             ConnectionCreditStore.finishSession(this, sessionId)
