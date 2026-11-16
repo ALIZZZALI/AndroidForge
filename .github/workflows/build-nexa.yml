@@ -14,8 +14,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 70
     env:
-      TAPSELL_APP_ID: ${{ secrets.TAPSELL_APP_ID }}
-      TAPSELL_REWARDED_ZONE_ID: ${{ secrets.TAPSELL_REWARDED_ZONE_ID }}
+      TAPSELL_APP_ID: ${{ secrets.TAPSELL_APP_ID || '6a27f82562158d268e956535' }}
+      TAPSELL_REWARDED_ZONE_ID: ${{ secrets.TAPSELL_REWARDED_ZONE_ID || 'rkeeohkakcacagnhccoghgqhlfccnbdmdhghgnntitqkdgcbtfkgngerdqoomsqjnnqjfq' }}
     steps:
       - name: Checkout Nexa build tooling
         uses: actions/checkout@v4
