@@ -794,7 +794,8 @@ def patch_gradle(root: Path) -> None:
             "dependencies {\n",
             'dependencies {\n'
             '    implementation("ir.tapsell:tapsell:1.4.0-alpha04")\n'
-            '    implementation("ir.tapsell.mediation.adapter:legacy:1.4.0-alpha04")\n',
+            '    implementation("ir.tapsell.mediation.adapter:legacy:1.4.0-alpha04")\n'
+            '    implementation("com.google.guava:guava:31.1-android")\n',
             "Tapsell Mediation dependencies",
         )
     if 'androidTestImplementation("androidx.test:core:' not in value:
@@ -805,16 +806,6 @@ def patch_gradle(root: Path) -> None:
             '    androidTestImplementation("androidx.test:runner:1.6.2")\n'
             '    androidTestImplementation("androidx.test:core:1.6.1")\n',
             "instrumentation dependencies",
-        )
-    if 'resolutionStrategy.force("com.google.guava:listenablefuture:1.0")' not in value:
-        value = replace_once(
-            value,
-            "android {\n",
-            'configurations.configureEach {\n'
-            '    resolutionStrategy.force("com.google.guava:listenablefuture:1.0")\n'
-            '}\n\n'
-            'android {\n',
-            "CameraX ListenableFuture compile-classpath workaround",
         )
     write(root, rel, value)
 
