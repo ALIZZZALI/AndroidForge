@@ -809,11 +809,11 @@ def patch_gradle(root: Path) -> None:
     if 'resolutionStrategy.force("com.google.guava:listenablefuture:1.0")' not in value:
         value = replace_once(
             value,
-            "dependencies {\n",
+            "android {\n",
             'configurations.configureEach {\n'
             '    resolutionStrategy.force("com.google.guava:listenablefuture:1.0")\n'
             '}\n\n'
-            'dependencies {\n',
+            'android {\n',
             "CameraX ListenableFuture compile-classpath workaround",
         )
     write(root, rel, value)
