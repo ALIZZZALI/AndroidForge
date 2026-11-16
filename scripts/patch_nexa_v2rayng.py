@@ -425,22 +425,26 @@ object RewardedAdManager {
         val internetLost = AtomicBoolean(false)
         val watcherClosed = AtomicBoolean(false)
         var failActiveAd: (() -> Unit)? = null
+        var networkCallback: ConnectivityManager.NetworkCallback? = null
+        var requestTimeout: Runnable? = null
         val connectivity = activity.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
 
         fun stopWatching() {
             if (!watcherClosed.compareAndSet(false, true)) return
-            runCatching { connectivity.unregisterNetworkCallback(networkCallback) }
+            networkCallback?.let { callback ->
+                runCatching { connectivity.unregisterNetworkCallback(callback) }
+            }
         }
 
         fun failPending(message: String) {
             if (!requestResolved.compareAndSet(false, true)) return
-            mainHandler.removeCallbacks(requestTimeout)
+            requestTimeout?.let(mainHandler::removeCallbacks)
             stopWatching()
             activeRequest.set(false)
             mainHandler.post { onFailure(message) }
         }
 
-        val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        networkCallback = object : ConnectivityManager.NetworkCallback() {
             private fun reportLoss() {
                 internetLost.set(true)
                 if (requestResolved.get()) {
@@ -474,17 +478,18 @@ object RewardedAdManager {
         }
 
         try {
-            connectivity.registerDefaultNetworkCallback(networkCallback)
+            val callback = networkCallback ?: throw IllegalStateException("Network callback was not created")
+            connectivity.registerDefaultNetworkCallback(callback)
         } catch (error: Exception) {
             activeRequest.set(false)
             onFailure("Could not monitor Internet connectivity")
             return
         }
 
-        val requestTimeout = Runnable {
+        requestTimeout = Runnable {
             failPending("No response from the ad service")
         }
-        mainHandler.postDelayed(requestTimeout, 60_000L)
+        mainHandler.postDelayed(requestTimeout!!, 60_000L)
 
         try {
             Tapsell.requestRewardedAd(zoneId, object : RequestResultListener {
