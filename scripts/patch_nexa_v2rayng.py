@@ -72,10 +72,8 @@ def patch_credit_store(root: Path) -> None:
 
 import android.content.ContentValues
 import android.content.Context
-import android.content.ContextWrapper
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
-import java.io.File
 import java.util.UUID
 
 /**
@@ -92,14 +90,8 @@ object ConnectionCreditStore {
     private val helperLock = Any()
     @Volatile private var dbHelper: LedgerDb? = null
 
-    private class NoBackupContext(base: Context) : ContextWrapper(base) {
-        override fun getDatabasePath(name: String): File {
-            return File(noBackupFilesDir, name).also { it.parentFile?.mkdirs() }
-        }
-    }
-
     private class LedgerDb(context: Context) :
-        SQLiteOpenHelper(NoBackupContext(context.applicationContext), DB_NAME, null, DB_VERSION) {
+        SQLiteOpenHelper(context.applicationContext, DB_NAME, null, DB_VERSION) {
         override fun onCreate(db: SQLiteDatabase) {
             db.execSQL("CREATE TABLE account (_id INTEGER PRIMARY KEY CHECK(_id = 1), credits INTEGER NOT NULL)")
             db.execSQL("INSERT INTO account (_id, credits) VALUES (1, 0)")
@@ -352,11 +344,7 @@ object ConnectionCreditStore {
         synchronized(helperLock) {
             dbHelper?.close()
             dbHelper = null
-            val base = context.applicationContext.noBackupFilesDir
-            File(base, DB_NAME).delete()
-            File(base, DB_NAME + "-journal").delete()
-            File(base, DB_NAME + "-wal").delete()
-            File(base, DB_NAME + "-shm").delete()
+            context.applicationContext.deleteDatabase(DB_NAME)
         }
     }
 }
@@ -712,6 +700,7 @@ def patch_config(root: Path) -> None:
 
     manifest = "V2rayNG/app/src/main/AndroidManifest.xml"
     value = read(root, manifest)
+    value = value.replace('android:allowBackup="true"', 'android:allowBackup="false"', 1)
     if 'android:name="com.google.android.gms.permission.AD_ID"' not in value:
         value = replace_once(
             value,
