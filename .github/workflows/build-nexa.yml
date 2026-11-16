@@ -14,7 +14,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 70
     env:
-      NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/30.0.16248370
       TAPSELL_APP_ID: ${{ secrets.TAPSELL_APP_ID }}
       TAPSELL_REWARDED_ZONE_ID: ${{ secrets.TAPSELL_REWARDED_ZONE_ID }}
     steps:
