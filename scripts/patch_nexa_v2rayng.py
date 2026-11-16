@@ -72,8 +72,10 @@ def patch_credit_store(root: Path) -> None:
 
 import android.content.ContentValues
 import android.content.Context
+import android.content.ContextWrapper
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import java.io.File
 import java.util.UUID
 
 /**
@@ -90,8 +92,14 @@ object ConnectionCreditStore {
     private val helperLock = Any()
     @Volatile private var dbHelper: LedgerDb? = null
 
+    private class NoBackupContext(base: Context) : ContextWrapper(base) {
+        override fun getDatabasePath(name: String): File {
+            return File(noBackupFilesDir, name).also { it.parentFile?.mkdirs() }
+        }
+    }
+
     private class LedgerDb(context: Context) :
-        SQLiteOpenHelper(context.applicationContext, DB_NAME, null, DB_VERSION) {
+        SQLiteOpenHelper(NoBackupContext(context.applicationContext), DB_NAME, null, DB_VERSION) {
         override fun onCreate(db: SQLiteDatabase) {
             db.execSQL("CREATE TABLE account (_id INTEGER PRIMARY KEY CHECK(_id = 1), credits INTEGER NOT NULL)")
             db.execSQL("INSERT INTO account (_id, credits) VALUES (1, 0)")
@@ -344,7 +352,11 @@ object ConnectionCreditStore {
         synchronized(helperLock) {
             dbHelper?.close()
             dbHelper = null
-            context.applicationContext.deleteDatabase(DB_NAME)
+            val base = context.applicationContext.noBackupFilesDir
+            File(base, DB_NAME).delete()
+            File(base, DB_NAME + "-journal").delete()
+            File(base, DB_NAME + "-wal").delete()
+            File(base, DB_NAME + "-shm").delete()
         }
     }
 }
@@ -353,6 +365,10 @@ object ConnectionCreditStore {
     write(root, "V2rayNG/app/src/main/java/com/v2ray/ang/billing/RewardedAdManager.kt", r'''package com.v2ray.ang.billing
 
 import android.app.Activity
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.os.Handler
 import android.os.Looper
 import com.v2ray.ang.BuildConfig
@@ -365,13 +381,23 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * Tapsell Mediation Rewarded Video adapter.
  *
- * Credits are granted only after BOTH independent SDK callbacks are received:
- * onAdClosed(COMPLETED) and onRewarded(). Closing, impression, click, or open
- * alone never grant a reward. The ad response ID is the local idempotency key.
+ * Credits require BOTH SDK callbacks: onAdClosed(COMPLETED) and onRewarded().
+ * A validated Internet connection is required before requesting and at reward
+ * commit; loss of validated connectivity during the ad invalidates the session.
+ * This is a client-side check, not proof against a modified APK.
  */
 object RewardedAdManager {
     private val activeRequest = AtomicBoolean(false)
     private val mainHandler = Handler(Looper.getMainLooper())
+
+    private fun hasValidatedInternet(context: Context): Boolean {
+        val manager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            ?: return false
+        val network = manager.activeNetwork ?: return false
+        val capabilities = manager.getNetworkCapabilities(network) ?: return false
+        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+    }
 
     fun show(
         activity: Activity,
@@ -380,6 +406,11 @@ object RewardedAdManager {
     ) {
         if (!activeRequest.compareAndSet(false, true)) {
             onFailure("A rewarded video request is already active")
+            return
+        }
+        if (!hasValidatedInternet(activity)) {
+            activeRequest.set(false)
+            onFailure("A validated Internet connection is required")
             return
         }
 
@@ -391,8 +422,67 @@ object RewardedAdManager {
         }
 
         val requestResolved = AtomicBoolean(false)
+        val internetLost = AtomicBoolean(false)
+        val watcherClosed = AtomicBoolean(false)
+        var failActiveAd: (() -> Unit)? = null
+        val connectivity = activity.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+
+        fun stopWatching() {
+            if (!watcherClosed.compareAndSet(false, true)) return
+            runCatching { connectivity.unregisterNetworkCallback(networkCallback) }
+        }
+
+        fun failPending(message: String) {
+            if (!requestResolved.compareAndSet(false, true)) return
+            mainHandler.removeCallbacks(requestTimeout)
+            stopWatching()
+            activeRequest.set(false)
+            mainHandler.post { onFailure(message) }
+        }
+
+        val networkCallback = object : ConnectivityManager.NetworkCallback() {
+            private fun reportLoss() {
+                internetLost.set(true)
+                if (requestResolved.get()) {
+                    mainHandler.post {
+                        failActiveAd?.invoke()
+                    }
+                } else {
+                    failPending("Internet connectivity was lost during the ad request")
+                }
+            }
+
+            override fun onLost(network: Network) {
+                if (!hasValidatedInternet(activity)) reportLoss()
+            }
+
+            override fun onUnavailable() {
+                reportLoss()
+            }
+
+            override fun onCapabilitiesChanged(
+                network: Network,
+                networkCapabilities: NetworkCapabilities
+            ) {
+                if (network == connectivity.activeNetwork &&
+                    (!networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) ||
+                     !networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED))
+                ) {
+                    reportLoss()
+                }
+            }
+        }
+
+        try {
+            connectivity.registerDefaultNetworkCallback(networkCallback)
+        } catch (error: Exception) {
+            activeRequest.set(false)
+            onFailure("Could not monitor Internet connectivity")
+            return
+        }
+
         val requestTimeout = Runnable {
-            failRequest(requestResolved, onFailure, "No response from the ad service")
+            failPending("No response from the ad service")
         }
         mainHandler.postDelayed(requestTimeout, 60_000L)
 
@@ -402,7 +492,14 @@ object RewardedAdManager {
                     if (!requestResolved.compareAndSet(false, true)) return
                     mainHandler.removeCallbacks(requestTimeout)
 
+                    if (internetLost.get() || !hasValidatedInternet(activity)) {
+                        stopWatching()
+                        activeRequest.set(false)
+                        mainHandler.post { onFailure("Internet connectivity is required to complete the ad") }
+                        return
+                    }
                     if (activity.isFinishing || activity.isDestroyed || adId.isBlank()) {
+                        stopWatching()
                         activeRequest.set(false)
                         mainHandler.post { onFailure("The ad could not be shown") }
                         return
@@ -414,27 +511,38 @@ object RewardedAdManager {
                     var completionValid = false
                     val terminal = AtomicBoolean(false)
                     var missingRewardTimeout: Runnable? = null
+                    var showTimeout: Runnable? = null
+
+                    fun release() {
+                        missingRewardTimeout?.let(mainHandler::removeCallbacks)
+                        showTimeout?.let(mainHandler::removeCallbacks)
+                        stopWatching()
+                        activeRequest.set(false)
+                    }
 
                     fun failShow(message: String) {
                         if (!terminal.compareAndSet(false, true)) return
-                        missingRewardTimeout?.let(mainHandler::removeCallbacks)
-                        activeRequest.set(false)
+                        release()
                         mainHandler.post {
                             if (!activity.isFinishing && !activity.isDestroyed) onFailure(message)
                         }
                     }
+                    failActiveAd = { failShow("Internet connectivity was lost or not validated") }
 
                     fun commitIfComplete() {
+                        if (internetLost.get() || !hasValidatedInternet(activity)) {
+                            failShow("A validated Internet connection is required to receive the reward")
+                            return
+                        }
                         val ready = synchronized(lock) {
                             closed && completionValid && rewarded && terminal.compareAndSet(false, true)
                         }
                         if (!ready) return
 
-                        missingRewardTimeout?.let(mainHandler::removeCallbacks)
                         val granted = runCatching {
                             ConnectionCreditStore.grantReward(activity.applicationContext, adId)
                         }.getOrDefault(false)
-                        activeRequest.set(false)
+                        release()
                         mainHandler.post {
                             if (activity.isFinishing || activity.isDestroyed) return@post
                             if (granted) onGranted()
@@ -442,10 +550,10 @@ object RewardedAdManager {
                         }
                     }
 
-                    val showTimeout = Runnable {
+                    showTimeout = Runnable {
                         failShow("The ad did not return a complete reward result")
                     }
-                    mainHandler.postDelayed(showTimeout, 10 * 60_000L)
+                    mainHandler.postDelayed(showTimeout!!, 10 * 60_000L)
 
                     try {
                         Tapsell.showRewardedAd(adId, activity, object : AdStateListener.Rewarded {
@@ -485,22 +593,12 @@ object RewardedAdManager {
                 }
 
                 override fun onFailure(message: String) {
-                    failRequest(requestResolved, onFailure, "No rewarded video is available")
+                    failPending("No rewarded video is available")
                 }
             })
         } catch (error: Exception) {
-            failRequest(requestResolved, onFailure, "The ad request failed")
+            failPending("The ad request failed")
         }
-    }
-
-    private fun failRequest(
-        resolved: AtomicBoolean,
-        callback: (String) -> Unit,
-        message: String
-    ) {
-        if (!resolved.compareAndSet(false, true)) return
-        activeRequest.set(false)
-        mainHandler.post { callback(message) }
     }
 }
 ''')
