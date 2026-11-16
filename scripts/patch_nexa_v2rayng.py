@@ -801,11 +801,11 @@ def patch_gradle(root: Path) -> None:
     if 'exclude(group = "com.google.guava", module = "listenablefuture")' not in value:
         value = replace_once(
             value,
-            "android {\\n",
-            'configurations.configureEach {\\n'
-            '    exclude(group = "com.google.guava", module = "listenablefuture")\\n'
-            '}\\n\\n'
-            'android {\\n',
+            "android {\n",
+            'configurations.configureEach {\n'
+            '    exclude(group = "com.google.guava", module = "listenablefuture")\n'
+            '}\n\n'
+            'android {\n',
             "Exclude duplicate ListenableFuture stub in favor of Guava",
         )
     if 'androidTestImplementation("androidx.test:core:' not in value:
