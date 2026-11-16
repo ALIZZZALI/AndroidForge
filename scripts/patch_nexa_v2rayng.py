@@ -1081,6 +1081,17 @@ def patch_core_vpn(root: Path) -> None:
         }
         currentSessionId = sessionId
 
+        // Ignore duplicate commands for the same logical session. Re-establishing
+        // a TUN descriptor while the core is already running can tear down the
+        // active tunnel and incorrectly settle the same credit twice.
+        if (CoreServiceManager.isRunning()) {
+            if (currentSessionId == sessionId) return START_STICKY
+            ConnectionCreditStore.finishSession(this, sessionId)
+            currentSessionId = null
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
+
         val isSystemVpnStart = intent == null || intent.action == SERVICE_INTERFACE
         if (isSystemVpnStart) unlockStart()
         if (!tryLockStart()) {
@@ -1240,7 +1251,7 @@ def patch_proxy_service(root: Path) -> None:
         currentSessionId = sessionId
 
         if (CoreServiceManager.isRunning()) {
-            if (ConnectionCreditStore.currentActiveSessionId(this) == sessionId) return START_STICKY
+            if (currentSessionId == sessionId) return START_STICKY
             ConnectionCreditStore.finishSession(this, sessionId)
             currentSessionId = null
             stopSelf(startId)
@@ -1316,7 +1327,7 @@ def patch_root_service(root: Path) -> None:
         currentSessionId = sessionId
 
         if (CoreServiceManager.isRunning()) {
-            if (ConnectionCreditStore.currentActiveSessionId(this) == sessionId) return START_STICKY
+            if (currentSessionId == sessionId) return START_STICKY
             ConnectionCreditStore.finishSession(this, sessionId)
             currentSessionId = null
             stopSelf(startId)
